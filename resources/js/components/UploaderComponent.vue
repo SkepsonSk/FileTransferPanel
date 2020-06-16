@@ -37,7 +37,7 @@
 <script>
 
     export default {
-        props: ['id', 'path'],
+        props: ['server', 'path'],
 
         data() {
             return {
@@ -61,7 +61,7 @@
 
                 let formData = new FormData();
 
-                formData.append('id', this.id);
+                formData.append('id', this.server);
                 formData.append('path', this.path);
 
                 for (let i = 0 ; i < this.files.length ; i++)
@@ -73,10 +73,17 @@
                         },
                     })
                     .then(res => {
-                        alert(JSON.stringify(res));
+
+                        let data = res.data;
+
+                        if (data.ok)
+                            this.$emit('uploadSuccessful', this.files);
+                        else
+                            this.$emit('uploadFailed', data.err);
+
+                        this.files = [];
                     })
                     .catch(res => {
-                        alert(JSON.stringify(res));
                 });
             },
 
@@ -92,7 +99,8 @@
 <style scoped>
 
     .uploader {
-        position: relative;
+        position: absolute;
+        z-index: 10000;
         width: 100%;
         height: 100%;
         background: rgba(0, 0, 0, 0.5);

@@ -3,6 +3,7 @@
     <div class="file"
          v-bind:key="this.name"
          v-on:click="open"
+         v-on:contextmenu="openContext($event)"
          :draggable="true"
          @dragover.stop
          @dragstart="handleDragStart">
@@ -15,10 +16,6 @@
 
             <div class="file__name">{{ this.name }}</div>
 
-            <div class="file__actions">
-                <i class="fas fa-times" v-on:click="remove()"></i>
-            </div>
-
         </div>
 
     </div>
@@ -28,8 +25,17 @@
 <script>
     export default {
 
+        data() {
+
+            return {
+                context: {display: 'none'}
+            }
+
+        },
+
         props: {
 
+            server: Number,
             name: String,
             path: String
 
@@ -37,36 +43,30 @@
 
         methods: {
 
-            remove() {
-
-                let file = this.path + '/' + this.name;
-
-                axios.post('/remove', {id: 1, file: file})
-                    .then(response => {
-                        this.$emit('fileRemoved', this.name);
-                    })
-                    .catch(error => {
-                        alert(error)
-                    })
-
-            },
-
             open() {
-                axios.post('/read', {id: 1, file: this.path + '/' + this.name})
+                let fileName = this.path + '/' + this.name;
+                axios.post('/read', {id: this.server, file: fileName})
                     .then(response => {
+
                         let file = response.data.file;
-                        this.$emit('fileRead', file);
+                        this.$emit('fileRead', file, fileName);
 
                     })
                     .catch(error => {
-                        alert(error);
+                        alert('err');
                     })
             },
 
             handleDragStart(e) {
                 e.dataTransfer.setData('fileName', this.name);
                 e.dataTransfer.setData('from', this.path + '/' + this.name);
-                //alert(this.name);
+            },
+
+            openContext(event) {
+                event.preventDefault();
+                let x = event.clientX;
+                let y = event.clientY;
+                this.$emit('contextOpened', { name: this.name, x: x, y: y });
             }
 
         }
@@ -76,8 +76,8 @@
 
 <style scoped>
 
-    .file:hover > .file__content > .file__actions {
-        opacity: 1;
+    .file:hover .file__name {
+        text-decoration: underline;
     }
 
     .file__content {

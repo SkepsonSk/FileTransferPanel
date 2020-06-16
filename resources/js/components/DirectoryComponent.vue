@@ -13,10 +13,6 @@
 
             <div class="directory__name">{{ shortName }}</div>
 
-            <div class="directory__actions">
-                <i class="fas fa-times"></i>
-            </div>
-
         </div>
 
     </div>
@@ -63,9 +59,10 @@
 
 <style scoped>
 
-    .directory:hover > .directory__content > .directory__actions {
-        visibility: visible;
+    .directory:hover .directory__name {
+        text-decoration: underline;
     }
+
 
     .directory__content {
         display: flex;
@@ -84,12 +81,6 @@
 
     .directory__name {
         width: 50%;
-    }
-
-    .directory__actions {
-        width: 25%;
-        visibility: hidden;
-        text-align: center;
     }
 
 </style>

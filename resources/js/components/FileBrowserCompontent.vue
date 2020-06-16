@@ -1,13 +1,25 @@
 <template>
 
-    <div v-bind:key="path">
+        <div class="browser"
+             v-bind:key="path"
+             @click="reset">
 
-        <div class="browser">
-
-            <uploader :class="uploader"
-                      :id="this.server"
+            <uploader :server="server"
                       :path="current"
+                      :class="uploader"
+                      v-on:uploadSuccessful="uploadSuccessful"
+                      v-on:uploadFailed="uploadFailed"
                       v-on:closed="hideUploader"/>
+
+            <file-creator :server="server"
+                          :type="newFileType"
+                          :path="current"
+                          :class="fileCreator"
+                          v-on:fileCreated="handleFileCreation"
+                          v-on:directoryCreated="handleDirectoryCreation"
+                          v-on:fileCreationFailed="fileCreationFailed"
+                          v-on:directoryCreationFailed="directoryCreationFailed"
+                          v-on:closed="closeCreator"/>
 
             <div class="browser__editor"
                  v-bind:class="{'browser__editor--hidden': editorHidden}">
@@ -17,8 +29,8 @@
                     <div class="editor__tools">
 
                         <div class="tools__left">
-                            <i class="tools__tool tools__tool--spaced fas fa-save"></i>
-                            <i class="tools__tool fas fa-download"></i>
+                            <i class="tools__tool tools__tool--spaced fas fa-save"
+                               @click="writeToFile"></i>
                         </div>
 
                         <div class="tools__right">
@@ -28,39 +40,52 @@
 
                     </div>
 
-                    <div class="editor__editable"
-                         spellcheck="false"
-                         contenteditable="true"
-                         v-html="fileData"
-                         v-on:blur="updateFile">
-                    </div>
+                    <textarea class="editor__editable" v-model="fileData"></textarea>
 
                 </div>
             </div>
 
             <div class="browser__topbar">
-                <ul class="dirs">
-                    <li v-if="notBaseDir()" v-on:click="switchBack()"> <i class="fas fa-chevron-left"></i> </li>
-                    <li class="dirs__back--inactive" v-else> <i class="fas fa-chevron-left"></i> </li>
 
-                    <li class="dirs__dir"
-                        v-on:click="openDir(start)">
-                        <i class="fas fa-home"></i> </li>
-
-                    <li class="dirs__dir" v-for="(dir, index) in getCurrent()"
-                        :id="getPath(index)"
-                        v-bind:key="dir"
-                        v-on:click="openDir(getPath(index))"
-
-                        @dragover.prevent
-                        @drop.prevent="wideDrop">
-                        {{ dir.trim() }}
-                    </li>
-                </ul>
+                <navigation-path class="topbar__navigation"
+                                 :start="this.start"
+                                 :path="this.current"
+                                 v-on:switchToStart="handleSwitchToStart"
+                                 v-on:switch="handleSwitch"
+                                 v-on:switchBack="handleSwitchBack"
+                                 v-on:fileMoved="handleFileMoved"/>
 
                 <div class="topbar__actions">
-                    <p class="actions__action" @click="showUploader"> Prześlij </p>
+
+                    <div class="actions__action">
+                        <i class="fas fa-plus"></i> Nowy <i class="fas fa-sort-down"></i>
+                        <div class="action__menu">
+                            <p class="menu__item" @click="createDirectory"> Katalog </p>
+                            <p class="menu__item" @click="createFile"> Plik </p>
+                        </div>
+                    </div>
+
+                    <p class="actions__action" @click="showUploader"> <i class="fas fa-upload"></i> Prześlij </p>
                 </div>
+            </div>
+
+            <div class="browser__context"
+                 :style="context">
+
+                <div class="context__content">
+
+                    <div class="context__option context__option--normal">
+                        <p class="option__name"
+                           @click="download"> Pobierz </p>
+                    </div>
+
+                    <div class="context__option context__option--danger">
+                        <p class="option__name"
+                           @click="removeFile"> Usuń </p>
+                    </div>
+
+                </div>
+
             </div>
 
             <ul class="files" v-bind:key="token">
@@ -78,24 +103,21 @@
                     v-for="file in this.files"
                     v-bind:key="file"
                     class="files__file"
+                    :server="server"
                     :name="file"
                     :path="current"
-                    v-on:fileRemoved="handleFileRemoved"
-                    v-on:fileRead="handleFileRead"/>
+                    v-on:fileRead="handleFileRead"
+                    v-on:contextOpened="openContext"/>
 
             </ul>
 
-        </div>
+            <error-stack :errors="errors"></error-stack>
 
-    </div>
+        </div>
 
 </template>
 
 <script>
-
-    import FileComponent from "./FileComponent";
-    import DirectoryComponent from "./DirectoryComponent";
-    import UploaderComponent from "./UploaderComponent";
 
     export default {
 
@@ -110,9 +132,19 @@
                 token: 0,
 
                 editorHidden: true,
+                editorFile: '',
+
                 uploaderHidden: true,
 
-                fileData: ''
+                fileData: '',
+
+                context: {display: 'none', left: 0, top: 0},
+                fileSelected: null,
+
+                fileCreatorHidden: true,
+                newFileType: '',
+
+                errors: []
             }
         },
 
@@ -120,58 +152,100 @@
 
             uploader() {
                 return {
-                    'uploader--hidden': this.uploaderHidden
+                    'hidden': this.uploaderHidden
+                }
+            },
+
+            fileCreator() {
+                return {
+                    'hidden': this.fileCreatorHidden
                 }
             }
 
         },
 
         created() {
+            if (this.start == null) return;
             this.openDir(this.current);
         },
 
         methods: {
 
+            error(text) {
+                let now = new Date();
+
+                let h = now.getHours();
+                let m = now.getMinutes();
+                let s = now.getSeconds();
+
+                if (h < 10) h = '0' + h;
+                if (m < 10) m = '0' + m;
+                if (s < 10) s = '0' + s;
+
+                let time = h + ':' + m + ':' + s;
+
+                this.errors.unshift({time: time, text: text});
+            },
+
             isUploaderHidden() { return this.uploaderHidden; },
+
+            /* ------------------------------------------------------------------------------ */
+
+            uploadSuccessful(files) {
+                for (let i = 0 ; i < files.length ; i++)
+                    this.files.push(files[i].name);
+                this.uploaderHidden = true;
+            },
+
+            uploadFailed(message) {
+                this.error(message);
+                this.uploaderHidden = true;
+            },
+
             showUploader() { this.uploaderHidden = false; },
             hideUploader() { this.uploaderHidden = true; },
+
+            /* ------------------------------------------------------------------------------ */
 
             getDirectory(fileName) { return this.current + '/' + fileName;},
             getCurrentPath() { return this.current; },
 
             openDir(path) {
-                axios.post('/files', {id: 1, path: path})
-                .then(response => {
-                    this.current = path;
-                    this.dirs = response.data.dirs;
-                    this.files = response.data.files;
+                axios.post('/files', {id: this.server, path: path})
+                .then(res => {
+
+                    let data = res.data;
+                    if (data.ok) {
+                        this.current = path;
+                        this.dirs = data.files.dirs;
+                        this.files = data.files.files;
+                    }
+                    else
+                        this.current = this.start;
+
                 })
                 .catch(error => {
                     alert(error)
                 })
             },
 
-            switchBack() {
+            /* ------------------------------------------------------------------------------ */
+
+            handleSwitchToStart() {
+                this.openDir(this.start);
+            },
+
+            handleSwitch(path) {
+                this.openDir(path);
+            },
+
+            handleSwitchBack() {
                 let ind = this.current.lastIndexOf('/');
                 this.current = this.current.substr(0, ind);
                 this.openDir(this.current);
             },
 
-            notBaseDir() { return this.current != this.start; },
-            getCurrent() {return this.current.replace(this.start, '').substring(1).split('/');},
-
-            getPath(index) {
-                let path = '';
-                if (index < this.length) path = this.start;
-                else {
-                    let arr = this.current.substring(1).split('/');
-
-                    for (let i = 0 ; i < index+1 ; i++)
-                        path += '/' + arr[i];
-                }
-
-                return path;
-            },
+            /* ------------------------------------------------------------------------------ */
 
             switchTo(index) {
 
@@ -188,24 +262,10 @@
                 this.openDir(this.current);
             },
 
-            wideDrop(e) {
-                const target = e.target;
-                alert(target.id);
-            },
-
-            dragStart(e) {
-                const target = e.target;
-                e.dataTransfer.setData('fileName', target.id);
-            },
-
             handleDrop(e) {
 
                 const target = e.target;
                 const fileName = e.dataTransfer.getData('fileName');
-
-                alert(target.id);
-
-                return;
 
                 const from = this.current + '/' + fileName;
                 const to = this.current + '/' + target.innerHTML;
@@ -217,7 +277,7 @@
                         if (data.ok)
                             this.files.splice(this.files.indexOf(fileName), 1);
                         else
-                            alert(data.err);
+                            this.error(data.err);
 
                     })
                     .catch( err => {
@@ -225,27 +285,45 @@
                     } );
             },
 
-            handleFileRemoved(fileName) { this.files.splice(this.files.indexOf(fileName), 1);},
+            /* ------------------------------------------------------------------------------ */
 
-            handleFileRead(fileData) {
-                for (let i = 0 ; i < fileData.length - 1 ; i++) {
-                    let line = fileData[i];
-                    this.fileData += '<p style="margin-bottom: 0">' + line + "</p>";
-                }
-
+            handleFileRead(fileData, fileName) {
+                this.editorFile = fileName;
+                this.fileData = fileData;
                 this.editorHidden = false;
             },
 
+            writeToFile() {
+
+                axios.post('/write', {id: this.server, file: this.editorFile, data: this.fileData})
+                .then(res => {
+                    let data = res.data;
+                    if (!data.ok)
+                        this.error(data.err);
+                })
+                .catch(err => {
+                   alert(JSON.stringify(err));
+                });
+
+            },
+
+            closeEditor() {
+                this.fileData = '';
+                this.editorHidden = true;
+            },
+
+            /* ------------------------------------------------------------------------------ */
+
             handleFileMoved(delta) {
 
-                axios.post('/move', {id: 1, from: delta.from, to: delta.to, fileName: delta.fileName})
+                axios.post('/move', {id: this.server, from: delta.from, to: delta.to, fileName: delta.fileName})
                     .then( res => {
 
                         const data = res.data;
                         if (data.ok)
                             this.files.splice(this.files.indexOf(delta.fileName), 1);
                         else
-                            alert(data.err);
+                            this.error(data.err);
 
                     })
                     .catch( err => {
@@ -254,20 +332,101 @@
 
             },
 
-            removeHTML() {
-                const doc = new DOMParser().parseFromString(html, 'text/html');
-                return doc.body.textContent || "";
+            /* ------------------------------------------------------------------------------ */
+
+            createDirectory() {
+                this.newFileType = 'dir';
+                this.fileCreatorHidden = false;
             },
 
-            updateFile(e) {
-                alert(e.target.innerHTML);
+            directoryCreationFailed(message) {
+                this.error(message);
             },
 
-            closeEditor() {
-                this.fileData = '';
-                this.editorHidden = true;
+            createFile() {
+                this.newFileType = 'file';
+                this.fileCreatorHidden = false;
+            },
+
+            fileCreationFailed(message) {
+                this.error(message);
+            },
+
+            closeCreator() {
+                this.fileCreatorHidden = true;
+            },
+
+            handleFileCreation(fileName) {
+                this.files.push(fileName);
+            },
+
+            handleDirectoryCreation(directoryName) {
+                this.dirs.push(directoryName);
+            },
+
+            /* ------------------------------------------------------------------------------ */
+
+            openContext(data) {
+                let name = data.name;
+                let x = data.x;
+                let y = data.y;
+
+                this.fileSelected = name;
+                this.context.display = 'block';
+                this.context.left = x + 'px';
+                this.context.top = y + 'px';
+            },
+
+            removeFile() {
+
+                let fileName = this.fileSelected;
+                let file = this.current + '/' + fileName;
+
+                axios.post('/remove', {id: this.server, file: file})
+                .then(res => {
+
+                    if (res.data.ok)
+                        this.files.splice(this.files.indexOf(fileName), 1);
+
+                    else
+                        this.error('Brak uprawnień do usuwania plików.');
+
+                })
+                .catch(err => { alert(JSON.stringify(err)); });
+
+            },
+
+            download() {
+
+                let fileName = this.fileSelected;
+                let file = this.current + '/' + fileName;
+
+                axios.post('/download', {id: this.server, file: file, name: fileName})
+                .then(res => {
+
+                    if (res.data.ok != null && !res.data.ok)
+                        this.error(res.data.err);
+
+                    else {
+                        let fileURL = window.URL.createObjectURL(new Blob([res.data]));
+                        let fileLink = document.createElement('a');
+
+                        fileLink.href = fileURL;
+                        fileLink.setAttribute('download', fileName);
+                        document.body.appendChild(fileLink);
+
+                        fileLink.click();
+                    }
 
 
+                })
+                .catch(err => { alert(JSON.stringify(err)); })
+
+            },
+
+            reset() {
+                this.fileSelected = null;
+                this.context.display = 'none';
             }
 
         }
@@ -292,12 +451,13 @@
         height: 100%;
     }
 
-    .uploader--hidden {
+    .hidden {
         display: none;
     }
 
     .browser__editor {
         position: absolute;
+        z-index: 1000;
         width: 100%;
         height: 100%;
         padding: 15px 0;
@@ -335,6 +495,7 @@
     }
 
     .editor__editable {
+        width: 100%;
         height: 90%;
         padding: 10px;
         background: white;
@@ -351,6 +512,11 @@
         width: 100%;
     }
 
+    .topbar__navigation {
+        width: 75%;
+        align-self: center;
+    }
+
     .topbar__actions {
         display: flex;
         align-items: center;
@@ -361,8 +527,10 @@
     }
 
     .actions__action {
+        display: inline-block;
+        position: relative;
         align-self: center;
-        margin: 0;
+        margin: 0 0 0 10px;
         padding: 10px 15px;
         background: #3192a3;
         color: white;
@@ -371,6 +539,61 @@
         cursor: pointer;
         transition: transform 0.3s;
     }
+
+    .action__menu {
+        display: none;
+        width: 150%;
+        z-index: 1000;
+        position: absolute;
+        left: 0;
+        top: 100%;
+        padding: 10px 15px;
+        background-color: #f8fafc;
+        color: black;
+        box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075) !important;
+        border-radius: 5px;
+    }
+
+    .actions__action:hover > .action__menu {
+        display: block;
+    }
+
+    .menu__item {
+        margin: 7.5px 0;
+        font-size: .95rem;
+    }
+
+    .menu__item:hover {
+        text-decoration: underline;
+    }
+
+
+    /* ----------------------------------------------------------------------- */
+
+    .browser__context {
+        position: absolute;
+        width: 7.5%;
+        box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075) !important;
+        font-size: 1rem;
+        text-align: center;
+        background-color: #f8fafc;
+    }
+
+    .context__option {
+        cursor: pointer;
+    }
+
+    .context__option--danger:hover {
+        background-color: #ef7777;
+        color: white;
+    }
+
+    .option__name {
+        margin: 0;
+        padding: 1rem 0;
+    }
+
+    /* ----------------------------------------------------------------------- */
 
     .dirs {
         display: flex;
